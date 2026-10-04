@@ -24,6 +24,7 @@ BLE_CONNECT_SERVICES = [
     "0000180a-0000-1000-8000-00805f9b34fb",  # Device Information
     LORAX_SERVICE_UUID,
     SERVICE_UUID,
+    PUP_SERVICE_UUID,  # bond trigger (PUP app version read forces OS pairing)
 ]
 
 # Alias for scan helpers / legacy imports

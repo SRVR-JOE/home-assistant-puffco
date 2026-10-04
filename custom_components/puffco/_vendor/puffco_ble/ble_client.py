@@ -321,9 +321,11 @@ class PuffcoBleakClient(BleakClient):
         self, timeout_s: float = 10.0, retry_delay_s: float = 0.5
     ) -> None:
         """Best-effort bond trigger (Android app path; web v3.6.26 skips if absent)."""
+        # PUP first (puff.social order); the SiLabs OTA read is the fallback
+        # because bootloader-service reads can drop the session.
         candidates = (
-            (SILABS_OTA_APP_VERSION_CHAR, "silabs OTA"),
             (PUP_APP_VERSION_CHAR, "PUP"),
+            (SILABS_OTA_APP_VERSION_CHAR, "silabs OTA"),
         )
         available = [
             (char_uuid, label)
@@ -502,7 +504,13 @@ class PuffcoBleakClient(BleakClient):
                 ("notify", "none"),
             ]
         else:
+            # Read the PUP app-version characteristic first: it requires an
+            # encrypted link, so the OS pairs implicitly (BlueZ/CoreBluetooth),
+            # which is what the official/web clients do. An explicit pair() on
+            # an already-open GATT link returns AuthenticationFailed on BlueZ
+            # and GET_LIMITS never gets a reply until the link is encrypted.
             strategies = [
+                ("notify", "trigger"),
                 ("notify", "none"),
                 ("indicate", "none"),
                 ("notify", "pair"),
