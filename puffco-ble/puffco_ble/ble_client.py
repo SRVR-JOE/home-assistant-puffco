@@ -12,6 +12,7 @@ import sys
 import time
 from asyncio import Event, ensure_future, wait_for
 from datetime import datetime
+from contextlib import AbstractAsyncContextManager
 from typing import Any, Callable
 
 from bleak import BleakClient, BleakError
@@ -81,6 +82,23 @@ class PuffcoBleakClient(BleakClient):
         self._lorax_notifications_active = False
         self._already_paired = False
         self._skip_explicit_pair = False
+        # Optional factory installed by the host (the HA integration) that
+        # returns an async context manager wrapped around every OS bond
+        # attempt — e.g. a temporary BlueZ pairing agent so SMP can complete.
+        self.pairing_context: (
+            Callable[[], AbstractAsyncContextManager[Any]] | None
+        ) = None
+
+    def _pairing_scope(self) -> AbstractAsyncContextManager[Any]:
+        """Context for a bond attempt; a no-op unless the host installed one."""
+        factory = self.pairing_context
+        if factory is None:
+            return contextlib.nullcontext()
+        try:
+            return factory()
+        except Exception as err:  # noqa: BLE001 - never block the bond attempt
+            _LOGGER.debug("Pairing context factory failed: %s", err)
+            return contextlib.nullcontext()
 
     def reset_pairing_cache(self) -> None:
         """Forget in-session Lorax pairing state (after bond heal / disconnect)."""
@@ -287,7 +305,8 @@ class PuffcoBleakClient(BleakClient):
                 _LOGGER.info("Lorax init: skipping OS pair() after prior AuthenticationFailed")
                 return False
             _LOGGER.info("Lorax init: bonding (OS pairing) for encrypted link...")
-            await self.pair()
+            async with self._pairing_scope():
+                await self.pair()
             self._already_paired = True
             _LOGGER.info("Bond result: paired (encrypted link)")
             return True
@@ -339,18 +358,23 @@ class PuffcoBleakClient(BleakClient):
             return
 
         deadline = time.monotonic() + timeout_s
-        for char_uuid, label in available:
-            _LOGGER.info("Bond trigger: reading %s...", label)
-            while time.monotonic() < deadline:
-                try:
-                    await self._read_gatt_char_timed(char_uuid, timeout=3.0)
-                    _LOGGER.info("Bond trigger read OK (%s)", label)
-                    return
-                except BleakError as err:
-                    if not self.is_connected or time.monotonic() >= deadline:
-                        _LOGGER.debug("Bond trigger read failed (%s): %s", label, err)
-                        break
-                    await asyncio.sleep(retry_delay_s)
+        # The read only completes once the OS has paired; keep the pairing
+        # context (e.g. BlueZ agent) open for the whole retry window.
+        async with self._pairing_scope():
+            for char_uuid, label in available:
+                _LOGGER.info("Bond trigger: reading %s...", label)
+                while time.monotonic() < deadline:
+                    try:
+                        await self._read_gatt_char_timed(char_uuid, timeout=3.0)
+                        _LOGGER.info("Bond trigger read OK (%s)", label)
+                        return
+                    except BleakError as err:
+                        if not self.is_connected or time.monotonic() >= deadline:
+                            _LOGGER.debug(
+                                "Bond trigger read failed (%s): %s", label, err
+                            )
+                            break
+                        await asyncio.sleep(retry_delay_s)
         _LOGGER.info("Bond trigger unavailable; continuing without it")
 
     async def _setup_sticky_prune(self) -> None:

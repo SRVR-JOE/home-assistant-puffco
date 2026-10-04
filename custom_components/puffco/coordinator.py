@@ -8,6 +8,7 @@ import logging
 import math
 from collections.abc import Awaitable, Callable
 from dataclasses import replace
+from functools import partial
 from datetime import datetime, timedelta
 
 from bleak.backends.device import BLEDevice
@@ -31,6 +32,7 @@ from homeassistant.helpers.entity import DeviceInfo as EntityDeviceInfo
 from homeassistant.helpers.event import async_track_time_interval
 from homeassistant.util import dt as dt_util
 
+from .bluez_agent import bluez_device_path, bluez_pairing_agent
 from .const import (
     CONF_BLOCK_START_WHILE_CHARGING,
     CONF_FAST_POLL,
@@ -88,13 +90,22 @@ def _make_connector(
         return bluetooth.async_ble_device_from_address(hass, mac, connectable=True)
 
     async def _connect(device: BLEDevice, on_disconnect) -> PuffcoBleakClient:
-        return await establish_connection(
+        client = await establish_connection(
             PuffcoBleakClient,
             device,
             device.name or mac,
             disconnected_callback=on_disconnect,
             ble_device_callback=_ble_device_callback,
         )
+        # Local BlueZ adapters are not bondable without a default agent (HA OS
+        # leaves AlwaysPairable off), so the Peak's SMP pairing is refused.
+        # Register a temporary auto-accept agent around each bond attempt.
+        # No-op for ESPHome proxies and non-Linux hosts.
+        device_path = bluez_device_path(client, device)
+        if device_path is not None:
+            client.pairing_context = partial(bluez_pairing_agent, device_path)
+            _LOGGER.debug("BlueZ pairing agent enabled for %s (%s)", mac, device_path)
+        return client
 
     return _connect
 

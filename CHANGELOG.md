@@ -2,6 +2,12 @@
 
 All notable changes to this project are documented here.
 
+## [1.1.24.2] - 2026-10-04
+
+### Fixed
+
+- **BlueZ (HA OS) pairing: register a temporary pairing agent** — BlueZ only makes an adapter bondable while a default `org.bluez.Agent1` is registered (`AlwaysPairable` is off on HA OS), so the kernel refused the Peak's SMP pairing: the PUP bond-trigger read timed out and `pair()` failed with `AuthenticationFailed` in ~100 ms. On a local BlueZ adapter the integration now registers a short-lived auto-accept agent (`KeyboardDisplay`, accepts only the Peak's own device path) around the bond trigger and `pair()`, then unregisters it. ESPHome proxies, macOS and Windows are unaffected; any D-Bus failure is logged and ignored.
+
 ## [1.1.24] - 2026-09-07
 
 ### Fixed
