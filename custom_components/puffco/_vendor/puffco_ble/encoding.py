@@ -235,7 +235,48 @@ def chamber_type_name(type_id: int) -> str:
         return f"unknown_{type_id}"
 
 
+_CBOR_COLOR_KEY = b"\x65color"  # CBOR text(5) "color"
+
+
 def parse_profile_color(data: bytes | bytearray) -> tuple[int, int, int]:
-    if not data or len(data) < 3:
+    """Profile colour from /u/app/hc/N/colr.
+
+    Newer (Lorax) firmware stores a CBOR map, e.g. a solid profile is
+    {"lamp": {"name": "solid", "param": {"color": h'RRGGBB'}}} and an animated
+    one carries a longer byte string of colours. Lorax short reads can truncate
+    long records, so instead of a full CBOR decode we locate the "color" key and
+    take the first RGB triple of the byte string that follows. Older firmware
+    returns raw [r, g, b, ...].
+    """
+    if not data:
         return (0, 0, 0)
-    return int(data[0]), int(data[1]), int(data[2])
+    raw = bytes(data)
+    i = raw.find(_CBOR_COLOR_KEY)
+    if i >= 0:
+        j = i + len(_CBOR_COLOR_KEY)
+        if j < len(raw):
+            head = raw[j]
+            if 0x40 <= head <= 0x57:      # byte string, length in header
+                start = j + 1
+            elif head == 0x58:            # byte string, 1-byte length
+                start = j + 2
+            elif head == 0x59:            # byte string, 2-byte length
+                start = j + 3
+            else:
+                start = -1
+            if start >= 0 and start + 3 <= len(raw):
+                return int(raw[start]), int(raw[start + 1]), int(raw[start + 2])
+        return (0, 0, 0)
+    if len(raw) < 3:
+        return (0, 0, 0)
+    return int(raw[0]), int(raw[1]), int(raw[2])
+
+
+def pack_profile_color_cbor(r: int, g: int, b: int) -> bytes:
+    """Solid profile colour in the firmware's own CBOR shape (byte-identical to what it returns)."""
+    return (
+        b"\xa1\x64lamp\xa2\x64name\x65solid\x65param\xa1"
+        + _CBOR_COLOR_KEY
+        + b"\x43"
+        + bytes((clamp_byte(r), clamp_byte(g), clamp_byte(b)))
+    )

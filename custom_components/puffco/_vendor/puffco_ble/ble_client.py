@@ -956,13 +956,16 @@ class PuffcoBleakClient(BleakClient):
         return parse_profile_color(raw)
 
     async def set_profile_color(self, profile: int, r: int, g: int, b: int) -> None:
-        from puffco_ble.encoding import pack_static_lantern_color
+        from puffco_ble.encoding import pack_profile_color_cbor, pack_static_lantern_color
 
-        await self.write_gatt_char(
-            Characteristics.PROFILE_COLOR,
-            pack_static_lantern_color(r, g, b),
-            number=profile,
+        # Lorax firmware keeps profile colours as CBOR; the legacy 8-byte lantern
+        # format is only valid on the flat-GATT protocol.
+        data = (
+            pack_profile_color_cbor(r, g, b)
+            if self.use_lorax_protocol
+            else pack_static_lantern_color(r, g, b)
         )
+        await self.write_gatt_char(Characteristics.PROFILE_COLOR, data, number=profile)
 
     async def get_chamber_type(self) -> int:
         data = await self.read_gatt_char(Characteristics.CHAMBER_TYPE)
@@ -1074,10 +1077,8 @@ class PuffcoBleakClient(BleakClient):
                 raise ValueError(f"Unknown animation {anim!r}")
         else:
             profile = await self.get_profile()
-            color = await self.read_gatt_char(
-                Characteristics.PROFILE_COLOR, number=profile
-            )
-            data = bytearray([*color[:3], 0, 1, 0, 0, 0])
+            r, g, b = await self.get_profile_color(profile)
+            data = bytearray([r, g, b, 0, 1, 0, 0, 0])
         await self.write_gatt_char(Characteristics.LANTERN_COLOR, data)
 
     async def get_lantern_brightness(self) -> int:
