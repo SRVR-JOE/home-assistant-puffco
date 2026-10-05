@@ -100,6 +100,11 @@ class PuffcoBleakClient(BleakClient):
             _LOGGER.debug("Pairing context factory failed: %s", err)
             return contextlib.nullcontext()
 
+    def _is_esphome_backend(self) -> bool:
+        """True when HA routed this connection through an ESPHome BT proxy."""
+        backend = getattr(self, "_backend", None)
+        return backend is not None and "esphome" in type(backend).__module__.lower()
+
     def reset_pairing_cache(self) -> None:
         """Forget in-session Lorax pairing state (after bond heal / disconnect)."""
         self._already_paired = False
@@ -525,6 +530,16 @@ class PuffcoBleakClient(BleakClient):
         if sys.platform == "win32":
             strategies = [
                 ("notify", "pair"),
+                ("notify", "none"),
+            ]
+        elif self._is_esphome_backend():
+            # ESPHome proxy: the ESP32 does not start SMP on an
+            # insufficient-encryption read (it just returns status 0x0F), so
+            # the trigger read never pairs. Its pair() maps to
+            # esp_ble_set_encryption, which the Peak accepts in pairing mode.
+            strategies = [
+                ("notify", "pair"),
+                ("indicate", "pair"),
                 ("notify", "none"),
             ]
         else:
