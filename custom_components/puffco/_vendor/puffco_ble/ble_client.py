@@ -952,6 +952,7 @@ class PuffcoBleakClient(BleakClient):
         from puffco_ble.encoding import parse_profile_color
 
         raw = await self.read_gatt_char(Characteristics.PROFILE_COLOR, number=profile)
+        _LOGGER.debug("Profile %s colr raw (%d bytes): %s", profile, len(raw or b""), bytes(raw or b"").hex(" "))
         return parse_profile_color(raw)
 
     async def set_profile_color(self, profile: int, r: int, g: int, b: int) -> None:
